@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { FlatList, Image, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, FlatList, Image, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import type { AuthStackParamList, EventData } from '../../navigation/AuthNavigator';
@@ -8,28 +8,47 @@ import type { QueryDocumentSnapshot, QuerySnapshot } from 'firebase/firestore';
 import { Timestamp, collection, onSnapshot, orderBy, query as fsQuery } from 'firebase/firestore';
 
 import { db } from '../../services/firebase';
+import { useTheme } from '../../theme/ThemeContext';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'HomeParticipant'>;
 
-const BG = '#050016';
-const HEADER_BG = '#0A0A1E';
-const CARD_BG = '#0b0620';
-const BORDER = 'rgba(123, 92, 255, 0.25)';
-const PRIMARY = '#7b5cff';
-const MUTED = '#a0a0c0';
-const MUTED2 = '#c0b8ff';
-
 const HomeParticipantScreen: React.FC<Props> = ({ navigation }) => {
+  const { theme } = useTheme();
   const [searchQuery, setSearchQuery] = useState('');
-
+  const [loading, setLoading] = useState(true);
   const [events, setEvents] = useState<EventData[]>([]);
 
   useEffect(() => {
-    const q = fsQuery(collection(db, 'events'), orderBy('createdAt', 'desc'));
+    setLoading(true);
+    // Exclure les événements de Paris Open Data (source: 'paris_opendata')
+    const q = fsQuery(
+      collection(db, 'events'), 
+      orderBy('createdAt', 'desc')
+    );
     const unsub = onSnapshot(
       q,
       (snap: QuerySnapshot) => {
-        const mapped = snap.docs.map((d: QueryDocumentSnapshot) => {
+        const now = new Date();
+        const mapped = snap.docs
+          .filter((d: QueryDocumentSnapshot) => {
+            const data: any = d.data();
+            // Filtrer les événements de Paris Open Data
+            if (data.source === 'paris_opendata' || 
+                data.organizerName?.includes('Ville de Paris - Que faire à Paris')) {
+              return false;
+            }
+            // Filtrer les événements passés
+            if (data.startDate) {
+              const startDate = data.startDate instanceof Timestamp 
+                ? data.startDate.toDate() 
+                : new Date(data.startDate);
+              if (startDate < now) {
+                return false;
+              }
+            }
+            return true;
+          })
+          .map((d: QueryDocumentSnapshot) => {
           const data: any = d.data();
           const start: Date | undefined = data.startDate instanceof Timestamp ? data.startDate.toDate() : undefined;
           const end: Date | undefined = data.endDate instanceof Timestamp ? data.endDate.toDate() : undefined;
@@ -66,9 +85,11 @@ const HomeParticipantScreen: React.FC<Props> = ({ navigation }) => {
           } as EventData;
         });
         setEvents(mapped);
+        setLoading(false);
       },
       (err: any) => {
         console.error('Firestore events error', err?.message);
+        setLoading(false);
       }
     );
 
@@ -88,58 +109,69 @@ const HomeParticipantScreen: React.FC<Props> = ({ navigation }) => {
   }, [events, searchQuery]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: BG }}>
+    <View style={{ flex: 1, backgroundColor: theme.background }}>
       <View
         style={{
-          backgroundColor: HEADER_BG,
+          backgroundColor: theme.header,
           paddingTop: 54,
           paddingBottom: 14,
           paddingHorizontal: 16,
           borderBottomWidth: 1,
-          borderBottomColor: 'rgba(123, 92, 255, 0.15)',
+          borderBottomColor: theme.border,
         }}
       >
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text style={{ color: '#ffffff', fontWeight: '900', fontSize: 18 }}>Événements</Text>
-          <TouchableOpacity
-            onPress={() => navigation.navigate('MyTickets')}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              backgroundColor: 'rgba(123, 92, 255, 0.15)',
-              paddingHorizontal: 12,
-              paddingVertical: 6,
-              borderRadius: 999,
-              borderWidth: 1,
-              borderColor: BORDER,
-            }}
-          >
-            <Ionicons name="ticket-outline" size={16} color={PRIMARY} />
-            <Text style={{ color: PRIMARY, fontWeight: '700', marginLeft: 6, fontSize: 13 }}>Mes billets</Text>
-          </TouchableOpacity>
+          <Text style={{ color: theme.text, fontWeight: '900', fontSize: 18 }}>Événements</Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('Settings' as never)}
+              style={{
+                padding: 8,
+                borderRadius: 20,
+              }}
+            >
+              <Ionicons name="settings-outline" size={20} color={theme.text} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('MyTickets')}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: 'rgba(123, 92, 255, 0.15)',
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                borderRadius: 999,
+                borderWidth: 1,
+                borderColor: theme.border,
+              }}
+            >
+              <Ionicons name="ticket-outline" size={16} color={theme.primary} />
+              <Text style={{ color: theme.primary, fontWeight: '700', marginLeft: 6, fontSize: 13 }}>Mes billets</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-        <Text style={{ color: MUTED, marginTop: 6 }}>Trouve et rejoins les meilleurs événements.</Text>
+        <Text style={{ color: theme.textMuted, marginTop: 6 }}>Trouve et rejoins les meilleurs événements.</Text>
 
         <View
           style={{
             marginTop: 14,
             flexDirection: 'row',
             alignItems: 'center',
-            backgroundColor: 'rgba(255, 255, 255, 0.03)',
+            backgroundColor: theme.inputBackground,
             borderRadius: 999,
             borderWidth: 1,
-            borderColor: BORDER,
+            borderColor: theme.border,
             paddingHorizontal: 14,
             paddingVertical: 10,
           }}
         >
-          <Ionicons name="search" size={18} color={MUTED2} />
+          <Ionicons name="search" size={18} color={theme.textMuted} />
           <TextInput
             value={searchQuery}
             onChangeText={setSearchQuery}
             placeholder="Rechercher un événement..."
-            placeholderTextColor="rgba(255, 255, 255, 0.35)"
-            style={{ color: '#ffffff', flex: 1, marginLeft: 10 }}
+            placeholderTextColor={theme.inputPlaceholder}
+            style={{ color: theme.text, flex: 1, marginLeft: 10 }}
           />
         </View>
       </View>
@@ -154,10 +186,10 @@ const HomeParticipantScreen: React.FC<Props> = ({ navigation }) => {
             <TouchableOpacity
               onPress={() => navigation.navigate('EventDetails', { event: item })}
               style={{
-                backgroundColor: CARD_BG,
+                backgroundColor: theme.card,
                 borderRadius: 22,
                 borderWidth: 1,
-                borderColor: BORDER,
+                borderColor: theme.border,
                 marginBottom: 14,
                 overflow: 'hidden',
               }}
@@ -166,47 +198,62 @@ const HomeParticipantScreen: React.FC<Props> = ({ navigation }) => {
 
               <View style={{ padding: 14 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Text style={{ color: '#ffffff', fontWeight: '900', fontSize: 16, flex: 1, paddingRight: 12 }}>
+                  <Text style={{ color: theme.text, fontWeight: '900', fontSize: 16, flex: 1, paddingRight: 12 }}>
                     {item.title}
                   </Text>
                   <View
                     style={{
-                      backgroundColor: 'rgba(123, 92, 255, 0.15)',
+                      backgroundColor: `${theme.primary}26`,
                       borderRadius: 999,
                       borderWidth: 1,
-                      borderColor: BORDER,
+                      borderColor: theme.border,
                       paddingVertical: 6,
                       paddingHorizontal: 10,
                     }}
                   >
-                    <Text style={{ color: PRIMARY, fontWeight: '800', fontSize: 12 }}>{priceLabel}</Text>
+                    <Text style={{ color: theme.primary, fontWeight: '800', fontSize: 12 }}>{priceLabel}</Text>
                   </View>
                 </View>
 
                 <View style={{ height: 10 }} />
 
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <Ionicons name="calendar-outline" size={16} color={PRIMARY} />
-                  <Text style={{ color: MUTED2 }}>{item.date} · {item.time}</Text>
+                  <Ionicons name="calendar-outline" size={16} color={theme.primary} />
+                  <Text style={{ color: theme.textSecondary }}>{item.date} · {item.time}</Text>
                 </View>
 
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 }}>
-                  <Ionicons name="location-outline" size={16} color={PRIMARY} />
-                  <Text style={{ color: MUTED2 }}>{item.location}</Text>
+                  <Ionicons name="location-outline" size={16} color={theme.primary} />
+                  <Text style={{ color: theme.textSecondary }}>{item.location}</Text>
                 </View>
 
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 }}>
-                  <Ionicons name="person-outline" size={16} color={PRIMARY} />
-                  <Text style={{ color: MUTED }}>Organisé par {item.organizer}</Text>
+                  <Ionicons name="person-outline" size={16} color={theme.primary} />
+                  <Text style={{ color: theme.textMuted }}>Organisé par {item.organizer}</Text>
                 </View>
               </View>
             </TouchableOpacity>
           );
         }}
         ListEmptyComponent={
-          <View style={{ alignItems: 'center', marginTop: 50 }}>
-            <Text style={{ color: MUTED }}>Aucun événement trouvé.</Text>
-          </View>
+          loading ? (
+            <View style={{ alignItems: 'center', marginTop: 50 }}>
+              <ActivityIndicator size="large" color={theme.primary} />
+              <Text style={{ color: theme.textMuted, marginTop: 16 }}>Chargement des événements...</Text>
+            </View>
+          ) : (
+            <View style={{ alignItems: 'center', marginTop: 50, paddingHorizontal: 32 }}>
+              <Ionicons name="calendar-outline" size={64} color={theme.textMuted} style={{ opacity: 0.3 }} />
+              <Text style={{ color: theme.text, fontWeight: '700', fontSize: 18, marginTop: 20, textAlign: 'center' }}>
+                {searchQuery ? 'Aucun événement trouvé' : 'Aucun événement disponible'}
+              </Text>
+              <Text style={{ color: theme.textMuted, marginTop: 8, textAlign: 'center', lineHeight: 20 }}>
+                {searchQuery 
+                  ? 'Essayez avec d\'autres mots-clés ou réessayez plus tard.'
+                  : 'Pour synchroniser des événements depuis Eventbrite, Ticketmaster ou SeatGeek :\n\n1. Configurez une clé API dans backend/.env\n2. Appelez POST /api/events/sync/external\n3. Les événements apparaîtront automatiquement ici'}
+              </Text>
+            </View>
+          )
         }
       />
     </View>

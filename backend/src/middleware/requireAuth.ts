@@ -13,10 +13,15 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
   }
 
   const token = header.slice('Bearer '.length).trim();
+  
+  // Debug: vérifier que le token est complet
+  if (!token || token.length < 100) {
+    console.error('Token seems too short:', token?.length, 'chars');
+    return res.status(401).json({ message: 'Token appears incomplete' });
+  }
 
   try {
-    const decoded = await firebaseAuth.verifyIdToken(token);
-
+    const decoded = await firebaseAuth.verifyIdToken(token, true);
     const firebaseUid = decoded.uid;
 
     const profileSnap = await firebaseDb.collection('users').doc(firebaseUid).get();
@@ -30,7 +35,10 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
     };
 
     return next();
-  } catch (_firebaseError) {
-    return res.status(401).json({ message: 'Invalid token' });
+  } catch (error: any) {
+    console.error('Auth error:', error?.message);
+    console.error('Token length:', token?.length);
+    console.error('Token starts with:', token?.substring(0, 50));
+    return res.status(401).json({ message: 'Invalid token', details: error?.message });
   }
 };

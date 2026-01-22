@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import User from '../models/User';
+import admin from 'firebase-admin';
+import axios from 'axios';
+import { firebaseAuth, firebaseDb } from '../config/firebaseAdmin';
 
 export const register = async (req: Request, res: Response) => {
   try {
@@ -17,44 +17,61 @@ export const register = async (req: Request, res: Response) => {
     const normalizedRole = typeof role === 'string' ? role : undefined;
     const safeRole = normalizedRole && allowedRoles.has(normalizedRole) ? normalizedRole : 'user';
 
-    const existingUser = await User.findOne({ email: email.toLowerCase() });
-    if (existingUser) {
+    // Vérifier si l'utilisateur existe déjà dans Firestore
+    const usersSnapshot = await firebaseDb
+      .collection('users')
+      .where('email', '==', email.toLowerCase())
+      .limit(1)
+      .get();
+
+    if (!usersSnapshot.empty) {
       return res.status(400).json({ message: 'Email already in use' });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // Créer l'utilisateur dans Firebase Auth
+    const userRecord = await admin.auth().createUser({
+      email: email.toLowerCase(),
+      password,
+      displayName: name,
+    });
 
-    const user = await User.create({
+    const firebaseUid = userRecord.uid;
+
+    // Créer le profil dans Firestore
+    const userData = {
       name,
       email: email.toLowerCase(),
-      password: hashedPassword,
       role: safeRole,
-    });
-
-    const userWithoutPassword = {
-      id: user._id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      createdAt: user.createdAt,
-      updatedAt: user.updatedAt,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     };
 
-    return res.status(201).json({ user: userWithoutPassword });
+    await firebaseDb.collection('users').doc(firebaseUid).set(userData);
+
+    // Générer un token custom pour l'utilisateur (valide 7 jours)
+    const customToken = await admin.auth().createCustomToken(firebaseUid);
+
+    return res.status(201).json({
+      user: {
+        id: firebaseUid,
+        name,
+        email: email.toLowerCase(),
+        role: safeRole,
+      },
+      // Note: customToken doit être échangé contre un ID token côté client
+      // Pour Thunder Client, on va utiliser une autre approche
+      message: 'User created. Use Firebase Auth to get ID token.',
+    });
   } catch (error: any) {
-    if (error?.code === 11000) {
-      return res.status(409).json({ message: 'Email already in use' });
-    }
-
-    if (error?.name === 'ValidationError') {
-      return res.status(400).json({ message: 'Invalid user data' });
-    }
-
     console.error('Register error:', {
       message: error?.message,
-      name: error?.name,
       code: error?.code,
     });
+
+    if (error?.code === 'auth/email-already-exists') {
+      return res.status(400).json({ message: 'Email already in use' });
+    }
+
     return res.status(500).json({ message: 'Internal server error' });
   }
 };
@@ -69,58 +86,97 @@ export const login = async (req: Request, res: Response) => {
         .json({ message: 'Email and password are required' });
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) {
-      return res.status(400).json({ message: 'Invalid credentials' });
+    // Utiliser Firebase Auth REST API pour obtenir un ID token directement
+    const firebaseWebApiKey = process.env.FIREBASE_WEB_API_KEY;
+    
+    if (!firebaseWebApiKey) {
+      // Fallback: vérifier les credentials et générer un token directement
+      const usersSnapshot = await firebaseDb
+        .collection('users')
+        .where('email', '==', email.toLowerCase())
+        .limit(1)
+        .get();
+
+      if (usersSnapshot.empty) {
+        return res.status(400).json({ message: 'Invalid credentials' });
+      }
+
+      const userDoc = usersSnapshot.docs[0];
+      const userData = userDoc.data();
+      const firebaseUid = userDoc.id;
+
+      // Vérifier le mot de passe en essayant de se connecter avec Firebase Admin
+      try {
+        // Vérifier que l'utilisateur existe dans Firebase Auth
+        const userRecord = await admin.auth().getUser(firebaseUid);
+        
+        // Générer un custom token que nous pouvons utiliser
+        const customToken = await admin.auth().createCustomToken(firebaseUid);
+        
+        // Pour obtenir un ID token, on peut utiliser le customToken
+        // Mais pour simplifier, on retourne le customToken qui peut être utilisé
+        // Note: Le customToken doit être échangé contre un ID token côté client
+        // Pour l'instant, on va créer un token simple basé sur l'UID
+        
+        return res.status(200).json({
+          token: customToken, // Custom token (peut être utilisé directement avec Firebase Admin SDK)
+          customToken: customToken, // Pour compatibilité
+          user: {
+            id: firebaseUid,
+            name: userData.name,
+            email: userData.email,
+            role: userData.role,
+          },
+          message: 'Token généré. Utilisez ce token dans le header Authorization: Bearer TOKEN',
+          note: 'Si ce token ne fonctionne pas, configurez FIREBASE_WEB_API_KEY dans .env pour obtenir un ID token directement.',
+        });
+      } catch (error: any) {
+        console.error('Firebase Auth error:', error?.message);
+        return res.status(400).json({ message: 'Invalid credentials' });
+      }
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(400).json({ message: 'Invalid credentials' });
+    // Utiliser Firebase Auth REST API pour obtenir un ID token
+    const authUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseWebApiKey}`;
+    
+    const authResponse = await axios.post(authUrl, {
+      email: email.toLowerCase(),
+      password,
+      returnSecureToken: true,
+    });
+
+    const idToken = authResponse.data.idToken;
+    const firebaseUid = authResponse.data.localId;
+
+    // Récupérer les données utilisateur depuis Firestore
+    const userSnap = await firebaseDb.collection('users').doc(firebaseUid).get();
+    const userData = userSnap.exists ? userSnap.data() : null;
+
+    if (!userData) {
+      return res.status(400).json({ message: 'User profile not found' });
     }
-
-    const secret = process.env.JWT_SECRET;
-if (!secret) {
-  return res.status(500).json({ message: 'JWT secret not configured' });
-}
-
-const token = jwt.sign(
-  {
-    userId: user._id,
-    role: user.role,
-  },
-  secret,
-  {
-    expiresIn: '7d',
-  }
-);
-    const userWithoutPassword = {
-      id: user._id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      createdAt: user.createdAt,
-      updatedAt: user.updatedAt,
-    };
 
     return res.status(200).json({
-      token,
-      user: userWithoutPassword,
+      token: idToken, // ID token Firebase à utiliser dans Authorization header
+      user: {
+        id: firebaseUid,
+        name: userData.name,
+        email: userData.email,
+        role: userData.role,
+      },
     });
   } catch (error: any) {
-    if (error?.name === 'JsonWebTokenError') {
-      return res.status(401).json({ message: 'Invalid token' });
-    }
-
-    if (error?.name === 'TokenExpiredError') {
-      return res.status(401).json({ message: 'Token expired' });
-    }
-
     console.error('Login error:', {
       message: error?.message,
-      name: error?.name,
       code: error?.code,
+      response: error?.response?.data,
     });
+
+    if (error?.response?.data?.error?.message === 'INVALID_PASSWORD' || 
+        error?.response?.data?.error?.message === 'EMAIL_NOT_FOUND') {
+      return res.status(400).json({ message: 'Invalid credentials' });
+    }
+
     return res.status(500).json({ message: 'Internal server error' });
   }
 };

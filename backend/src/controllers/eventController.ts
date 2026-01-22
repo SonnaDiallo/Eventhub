@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import admin from 'firebase-admin';
 import { firebaseDb } from '../config/firebaseAdmin';
+import { EventCategory, isValidCategory } from '../types/categories';
+import { getCategoryDefaultImage, detectCategoryFromTitle } from '../services/categoryService';
 
 export const createEvent = async (req: Request, res: Response) => {
   try {
@@ -15,6 +17,7 @@ export const createEvent = async (req: Request, res: Response) => {
       price,
       capacity,
       organizerName,
+      category,
     } = req.body;
 
     if (!title) {
@@ -26,9 +29,28 @@ export const createEvent = async (req: Request, res: Response) => {
       return res.status(401).json({ message: 'Unauthorized' });
     }
 
+    // Valider la catégorie si fournie, sinon détecter depuis le titre
+    let eventCategory: string;
+    if (category && isValidCategory(category)) {
+      eventCategory = category;
+    } else if (category) {
+      return res.status(400).json({ 
+        message: 'Catégorie invalide',
+        error: 'Invalid category',
+        validCategories: Object.values(EventCategory),
+      });
+    } else {
+      // Détecter automatiquement la catégorie depuis le titre
+      eventCategory = detectCategoryFromTitle(title);
+    }
+
+    // Utiliser l'image fournie ou l'image par défaut de la catégorie
+    const finalCoverImage = getCategoryDefaultImage(eventCategory, coverImage);
+
     const payload = {
       title,
-      coverImage: typeof coverImage === 'string' ? coverImage : undefined,
+      coverImage: finalCoverImage,
+      category: eventCategory,
       startDate: startDate ? new Date(startDate) : undefined,
       endDate: endDate ? new Date(endDate) : undefined,
       location: typeof location === 'string' ? location : undefined,
@@ -153,3 +175,45 @@ export const getParticipants = async (req: Request, res: Response) => {
     return res.status(500).json({ message: 'Internal server error' });
   }
 };
+
+// Vérifier le token JWT de l'utilisateur
+export const verifyToken = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as Request & { user?: { userId?: string } }).user?.userId;
+    const role = (req as Request & { user?: { role?: string } }).user?.role;
+    
+    if (!userId) {
+      return res.status(401).json({ 
+        message: 'Token invalide ou expiré',
+        valid: false,
+      });
+    }
+
+    // Récupérer les infos utilisateur depuis Firestore
+    const userSnap = await firebaseDb.collection('users').doc(userId).get();
+    const userData = userSnap.exists ? userSnap.data() : null;
+
+    return res.status(200).json({
+      message: 'Token valide',
+      valid: true,
+      user: {
+        id: userId,
+        email: userData?.email,
+        name: userData?.name,
+        role: role || userData?.role || 'participant',
+      },
+      permissions: {
+        canSyncEvents: role === 'organizer',
+        canCreateEvents: role === 'organizer',
+        canViewEvents: true,
+      },
+    });
+  } catch (error: any) {
+    return res.status(401).json({ 
+      message: 'Token invalide',
+      valid: false,
+      error: error?.message || 'Unknown error',
+    });
+  }
+};
+

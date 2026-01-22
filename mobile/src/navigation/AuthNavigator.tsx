@@ -11,6 +11,7 @@ import HomeParticipantScreen from '../screens/Events/HomeParticipantScreen';
 import MyTicketsScreen from '../screens/Events/MyTicketsScreen';
 import OrganizerDashboardScreen from '../screens/Organizer/OrganizerDashboardScreen';
 import ScanTicketScreen from '../screens/Organizer/ScanTicketScreen';
+import SettingsScreen from '../screens/Settings/SettingsScreen';
 
 export type EventData = {
   id: string;
@@ -37,6 +38,7 @@ export type AuthStackParamList = {
   CreateEvent: undefined;
   EventDetails: { event?: EventData } | undefined;
   Participants: { eventId: string };
+  Settings: undefined;
 };
 
 const Stack = createNativeStackNavigator<AuthStackParamList>();
@@ -104,6 +106,11 @@ const AuthNavigator: React.FC = () => {
         name="Participants"
         component={ParticipantsScreen}
         options={{ title: 'Participants' }}
+      />
+      <Stack.Screen
+        name="Settings"
+        component={SettingsScreen}
+        options={{ headerShown: false }}
       />
     </Stack.Navigator>
   );

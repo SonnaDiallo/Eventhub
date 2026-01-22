@@ -28,7 +28,7 @@
     },
     "extra": {
       "firebase": {
-        "apiKey": "AIzaSyCwNJP9o2gvPPtuBICYj1wwdtGPrGS9T-g",
+        "apiKey": "YOUR_FIREBASE_API_KEY_HERE",
         "authDomain": "eventhub-eedee.firebaseapp.com",
         "projectId": "eventhub-eedee",
         "storageBucket": "eventhub-eedee.firebasestorage.app",
